@@ -1,0 +1,181 @@
+---
+title: "Building a Git Clone in Go: Pack Files, Delta Chains, and the Smart HTTP Protocol"
+date: "2024-11-15"
+description: "A deep dive into how I implemented Git's core plumbing commands from scratch in Go, including object storage, pack file parsing, and the HTTP smart protocol."
+tags: ["Go", "Systems", "Git"]
+published: true
+---
+
+After spending years using Git daily without really understanding it, I decided the best way to learn was to build it. This post covers the journey of implementing `git clone`, `git add`, `git commit`, `git log`, and `git push` from scratch in Go.
+
+## The Object Model
+
+Everything in Git is an **object**. There are four types:
+
+- `blob` — file content
+- `tree` — a directory listing
+- `commit` — a snapshot with metadata
+- `tag` — a named pointer to a commit
+
+Each object is identified by the SHA-1 hash of its content, prefixed with its type and size.
+
+```go title="objects/store.go"
+type ObjectType string
+
+const (
+    BlobType   ObjectType = "blob"
+    TreeType   ObjectType = "tree"
+    CommitType ObjectType = "commit"
+    TagType    ObjectType = "tag"
+)
+
+type Object struct {
+    Type    ObjectType
+    Size    int
+    Content []byte
+}
+
+// Hash computes the Git object hash: SHA1("type size\0content")
+func (o *Object) Hash() [20]byte {
+    header := fmt.Sprintf("%s %d\x00", o.Type, len(o.Content))
+    h := sha1.New()
+    h.Write([]byte(header))
+    h.Write(o.Content)
+    var result [20]byte
+    copy(result[:], h.Sum(nil))
+    return result
+}
+```
+
+Objects are stored in `.git/objects/` using the first two hex characters as a directory name and the remaining 38 as the filename. The content is zlib-compressed.
+
+```go title="objects/store.go"
+func (s *ObjectStore) Write(obj *Object) error {
+    hash := obj.Hash()
+    hex := fmt.Sprintf("%x", hash)
+
+    dir := filepath.Join(s.root, hex[:2])
+    if err := os.MkdirAll(dir, 0755); err != nil {
+        return err
+    }
+
+    path := filepath.Join(dir, hex[2:])
+    if _, err := os.Stat(path); err == nil {
+        return nil // already exists
+    }
+
+    var buf bytes.Buffer
+    w := zlib.NewWriter(&buf)
+    header := fmt.Sprintf("%s %d\x00", obj.Type, len(obj.Content))
+    w.Write([]byte(header))
+    w.Write(obj.Content)
+    w.Close()
+
+    return os.WriteFile(path, buf.Bytes(), 0444)
+}
+```
+
+## Pack Files
+
+When you clone a repository, Git doesn't send individual loose objects. It sends a **pack file** — a highly compressed, delta-encoded bundle of objects. Parsing this was the hardest part of the project.
+
+A pack file starts with the magic bytes `PACK`, followed by a 4-byte version, and a 4-byte count of objects. Each object then follows with a variable-length size encoding:
+
+```go title="packfile/parse.go"
+// readVarint reads a variable-length integer from the pack stream.
+// The low 4 bits of the first byte encode the object type.
+func readVarint(r io.Reader) (objType int, size int, err error) {
+    var b [1]byte
+    if _, err = r.Read(b[:]); err != nil {
+        return
+    }
+
+    objType = int((b[0] >> 4) & 0x7)
+    size = int(b[0] & 0xF)
+    shift := 4
+
+    for b[0]&0x80 != 0 {
+        if _, err = r.Read(b[:]); err != nil {
+            return
+        }
+        size |= int(b[0]&0x7F) << shift
+        shift += 7
+    }
+    return
+}
+```
+
+## Delta Chains
+
+The nastiest part. Pack files store objects as **deltas** — compact diffs against a base object. There are two delta types:
+
+- `OBJ_OFS_DELTA` — delta against an object at a negative offset in the same pack
+- `OBJ_REF_DELTA` — delta against an object referenced by its SHA-1
+
+A delta is a sequence of instructions: **copy** a range of bytes from the base, or **insert** new bytes inline.
+
+```go title="packfile/delta.go"
+func applyDelta(base, delta []byte) ([]byte, error) {
+    r := bytes.NewReader(delta)
+    srcSize, _ := readDeltaSize(r)
+    dstSize, _ := readDeltaSize(r)
+
+    if int(srcSize) != len(base) {
+        return nil, fmt.Errorf("delta source size mismatch")
+    }
+
+    result := make([]byte, 0, dstSize)
+
+    for r.Len() > 0 {
+        cmd, _ := r.ReadByte()
+
+        if cmd&0x80 != 0 { // copy instruction
+            offset, size := decodeCopyCmd(r, cmd)
+            result = append(result, base[offset:offset+size]...)
+        } else if cmd != 0 { // insert instruction
+            data := make([]byte, cmd)
+            r.Read(data)
+            result = append(result, data...)
+        }
+    }
+
+    return result, nil
+}
+```
+
+## The HTTP Smart Protocol
+
+The `git clone` HTTP protocol is a two-phase dance:
+
+1. **Discovery** — `GET /info/refs?service=git-upload-pack` to find what refs the server has.
+2. **Upload Pack** — `POST /git-upload-pack` with a negotiation payload specifying what you want and what you have.
+
+```go title="transport/http.go"
+func (t *HTTPTransport) Fetch(wants []string, haves []string) (*packfile.PackFile, error) {
+    var body bytes.Buffer
+    w := pktline.NewWriter(&body)
+
+    for _, want := range wants {
+        w.WriteString(fmt.Sprintf("want %s\n", want))
+    }
+    w.WriteFlush()
+
+    for _, have := range haves {
+        w.WriteString(fmt.Sprintf("have %s\n", have))
+    }
+    w.WriteString("done\n")
+
+    resp, err := http.Post(
+        t.url+"/git-upload-pack",
+        "application/x-git-upload-pack-request",
+        &body,
+    )
+    // ... parse the response pack file
+}
+```
+
+## What I Learned
+
+Building Git taught me more about content-addressable storage, delta compression, and binary protocol parsing than any tutorial could. The Git internals documentation is excellent, but nothing beats reading the source and implementing it yourself.
+
+The full source is on GitHub. PRs welcome.

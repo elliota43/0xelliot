@@ -1,0 +1,81 @@
+---
+title: "Rust Lifetime Patterns"
+date: "2024-10-08"
+description: "Common lifetime annotation patterns in Rust that come up repeatedly when building parsers, buffers, and zero-copy APIs."
+language: "Rust"
+tags: ["Rust", "Lifetimes", "Patterns"]
+---
+
+## The Borrow-From-Self Pattern
+
+When a method returns a reference into `self`, the lifetime is implicit but can be written explicitly:
+
+```rust
+struct Parser<'src> {
+    input: &'src str,
+    pos: usize,
+}
+
+impl<'src> Parser<'src> {
+    // The returned slice lives as long as the source string, not just &self
+    fn peek_word(&self) -> &'src str {
+        let start = self.pos;
+        let end = self.input[start..]
+            .find(|c: char| !c.is_alphanumeric())
+            .map(|i| start + i)
+            .unwrap_or(self.input.len());
+        &self.input[start..end]
+    }
+}
+```
+
+## Named Lifetime Elision
+
+When a function takes a single reference and returns a reference, Rust elides the lifetime:
+
+```rust
+// These are identical:
+fn first_word(s: &str) -> &str { ... }
+fn first_word<'a>(s: &'a str) -> &'a str { ... }
+```
+
+But when there are multiple input references, you must be explicit:
+
+```rust
+// Which input does the return borrow from?
+fn longest<'a>(x: &'a str, y: &'a str) -> &'a str {
+    if x.len() > y.len() { x } else { y }
+}
+```
+
+## The 'static Lifetime
+
+`'static` means the reference is valid for the entire program lifetime. This comes up with string literals and when spawning threads:
+
+```rust
+// String literals are 'static
+let s: &'static str = "I live forever";
+
+// Threads require 'static because they might outlive the current scope
+std::thread::spawn(move || {
+    // captured values must be 'static or owned
+});
+```
+
+## Struct with Lifetime vs. Owned Data
+
+Choose lifetimes for zero-copy parsing; owned types for ergonomic APIs:
+
+```rust
+// Zero-copy: fast, but ties caller to source lifetime
+struct AstNode<'src> {
+    name: &'src str,
+    span: std::ops::Range<usize>,
+}
+
+// Owned: ergonomic, heap-allocates
+struct AstNodeOwned {
+    name: String,
+    span: std::ops::Range<usize>,
+}
+```

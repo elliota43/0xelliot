@@ -1,0 +1,200 @@
+---
+title: "Implementing a Lox Bytecode VM in C: NaN Boxing, Mark-and-Sweep GC, and Upvalues"
+date: "2024-07-03"
+description: "Following Crafting Interpreters Part III — implementing a fast bytecode VM for the Lox language with NaN-boxing, a mark-and-sweep garbage collector, and closures."
+tags: ["C", "Compilers", "VM", "GC"]
+published: true
+---
+
+Robert Nystrom's [Crafting Interpreters](https://craftinginterpreters.com/) is one of the best programming books ever written. Part III challenges you to build a production-quality bytecode VM in C. Here's a walkthrough of the most interesting parts I implemented.
+
+## The Value Representation: NaN Boxing
+
+The naive approach is a tagged union:
+
+```c title="value.h (naive)"
+typedef enum { VAL_BOOL, VAL_NIL, VAL_NUMBER, VAL_OBJ } ValueType;
+
+typedef struct {
+    ValueType type;
+    union {
+        bool boolean;
+        double number;
+        Obj* obj;
+    } as;
+} Value;
+```
+
+This costs 16 bytes per value on 64-bit systems. NaN boxing packs the type tag *into* the bits of a `double` that represent a NaN. IEEE 754 doubles have 51 mantissa bits that are "quiet" NaN bits — plenty of space for a pointer or tag.
+
+```c title="value.h (NaN-boxed)"
+typedef uint64_t Value;
+
+// A quiet NaN has the sign bit clear, exponent all 1s, and at least one mantissa bit set.
+#define QNAN     ((uint64_t)0x7ffc000000000000)
+#define SIGN_BIT ((uint64_t)0x8000000000000000)
+
+// Tag bits stored in the low 2 bits of the payload
+#define TAG_NIL   1 // 01
+#define TAG_FALSE 2 // 10
+#define TAG_TRUE  3 // 11
+
+// Packing/unpacking macros
+#define NIL_VAL         ((Value)(uint64_t)(QNAN | TAG_NIL))
+#define FALSE_VAL       ((Value)(uint64_t)(QNAN | TAG_FALSE))
+#define TRUE_VAL        ((Value)(uint64_t)(QNAN | TAG_TRUE))
+#define BOOL_VAL(b)     ((b) ? TRUE_VAL : FALSE_VAL)
+#define NUMBER_VAL(n)   numToValue(n)
+#define OBJ_VAL(obj)    (Value)(SIGN_BIT | QNAN | (uint64_t)(uintptr_t)(obj))
+
+#define IS_NIL(v)       ((v) == NIL_VAL)
+#define IS_BOOL(v)      (((v) | 1) == TRUE_VAL)
+#define IS_NUMBER(v)    (((v) & QNAN) != QNAN)
+#define IS_OBJ(v)       (((v) & (SIGN_BIT | QNAN)) == (SIGN_BIT | QNAN))
+
+static inline Value numToValue(double n) {
+    Value v;
+    memcpy(&v, &n, sizeof(double));
+    return v;
+}
+```
+
+Every value now fits in a `uint64_t`. Numbers pass through unchanged (they're valid doubles). Everything else is encoded as a quiet NaN.
+
+## The Bytecode Compiler
+
+I'm proud of the single-pass compiler — no AST, just direct emission:
+
+```c title="compiler.c"
+static void number(bool canAssign) {
+    (void)canAssign;
+    double value = strtod(parser.previous.start, NULL);
+    emitConstant(NUMBER_VAL(value));
+}
+
+static void binary(bool canAssign) {
+    (void)canAssign;
+    TokenType operatorType = parser.previous.type;
+    ParseRule* rule = getRule(operatorType);
+    parsePrecedence((Precedence)(rule->precedence + 1));
+
+    switch (operatorType) {
+        case TOKEN_PLUS:          emit(OP_ADD); break;
+        case TOKEN_MINUS:         emit(OP_SUBTRACT); break;
+        case TOKEN_STAR:          emit(OP_MULTIPLY); break;
+        case TOKEN_SLASH:         emit(OP_DIVIDE); break;
+        case TOKEN_BANG_EQUAL:    emit2(OP_EQUAL, OP_NOT); break;
+        case TOKEN_EQUAL_EQUAL:   emit(OP_EQUAL); break;
+        case TOKEN_GREATER:       emit(OP_GREATER); break;
+        case TOKEN_GREATER_EQUAL: emit2(OP_LESS, OP_NOT); break;
+        case TOKEN_LESS:          emit(OP_LESS); break;
+        case TOKEN_LESS_EQUAL:    emit2(OP_GREATER, OP_NOT); break;
+        default: return;
+    }
+}
+```
+
+The Pratt parser table maps token types to prefix and infix parse functions with precedence levels. Elegant.
+
+## Mark-and-Sweep Garbage Collector
+
+The GC uses a simple tri-color mark-and-sweep algorithm. Objects are either **white** (not yet visited), **gray** (visited but children not yet scanned), or **black** (fully processed).
+
+```c title="memory.c"
+void collectGarbage() {
+    // Mark phase: start from GC roots
+    markRoots();
+
+    // Process the gray list until empty
+    while (vm.grayCount > 0) {
+        Obj* obj = vm.grayStack[--vm.grayCount];
+        blackenObject(obj);
+    }
+
+    // Sweep phase: free all white (unreachable) objects
+    Obj** obj = &vm.objects;
+    while (*obj != NULL) {
+        if (!((*obj)->isMarked)) {
+            Obj* unreached = *obj;
+            *obj = unreached->next;
+            freeObject(unreached);
+        } else {
+            (*obj)->isMarked = false;
+            obj = &(*obj)->next;
+        }
+    }
+
+    // Tune next GC threshold
+    vm.nextGC = vm.bytesAllocated * GC_HEAP_GROW_FACTOR;
+}
+```
+
+## Closures and Upvalues
+
+Closures capture variables from enclosing scopes. The tricky part is that when a variable is still on the stack, the upvalue points directly to the stack slot. When it goes out of scope (is "closed over"), the upvalue copies the value to its own heap location.
+
+```c title="vm.c"
+static ObjUpvalue* captureUpvalue(Value* local) {
+    // Reuse an existing open upvalue for this stack slot if one exists
+    ObjUpvalue* prev = NULL;
+    ObjUpvalue* upvalue = vm.openUpvalues;
+    while (upvalue != NULL && upvalue->location > local) {
+        prev = upvalue;
+        upvalue = upvalue->next;
+    }
+
+    if (upvalue != NULL && upvalue->location == local) {
+        return upvalue; // reuse
+    }
+
+    ObjUpvalue* created = newUpvalue(local);
+    created->next = upvalue;
+    if (prev == NULL) {
+        vm.openUpvalues = created;
+    } else {
+        prev->next = created;
+    }
+    return created;
+}
+
+static void closeUpvalues(Value* last) {
+    while (vm.openUpvalues != NULL && vm.openUpvalues->location >= last) {
+        ObjUpvalue* upvalue = vm.openUpvalues;
+        upvalue->closed = *upvalue->location; // copy to heap
+        upvalue->location = &upvalue->closed; // point to own copy
+        vm.openUpvalues = upvalue->next;
+    }
+}
+```
+
+## The Dispatch Loop
+
+At the heart of the VM is a tight dispatch loop. I used computed gotos (`__extension__`) for a ~20% speedup over a switch statement on GCC/Clang:
+
+```c title="vm.c"
+#define READ_BYTE()     (*vm.ip++)
+#define READ_CONSTANT() (vm.chunk->constants.values[READ_BYTE()])
+#define BINARY_OP(valueType, op) \
+    do { \
+        double b = AS_NUMBER(pop()); \
+        double a = AS_NUMBER(pop()); \
+        push(valueType(a op b)); \
+    } while (false)
+
+InterpretResult run() {
+    for (;;) {
+        uint8_t instruction = READ_BYTE();
+        switch (instruction) {
+            case OP_CONSTANT: push(READ_CONSTANT()); break;
+            case OP_ADD:      BINARY_OP(NUMBER_VAL, +); break;
+            case OP_SUBTRACT: BINARY_OP(NUMBER_VAL, -); break;
+            case OP_MULTIPLY: BINARY_OP(NUMBER_VAL, *); break;
+            case OP_DIVIDE:   BINARY_OP(NUMBER_VAL, /); break;
+            case OP_RETURN:   return INTERPRET_OK;
+            // ...
+        }
+    }
+}
+```
+
+This project was one of the most educational things I've ever built. If you're interested in language implementation, read Crafting Interpreters.
