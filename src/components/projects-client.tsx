@@ -1,240 +1,147 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Github, ExternalLink, Star, GitFork } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Github } from "lucide-react";
 
 interface Project {
   title: string;
   description: string;
-  longDescription: string;
   tags: string[];
   github?: string;
-  demo?: string;
   stars?: number;
-  forks?: number;
   lang: string;
-  langColor: string;
-  size?: "normal" | "wide" | "tall";
-  status: "complete" | "active" | "archived";
+  status: string;
 }
 
 const PROJECTS: Project[] = [
   {
-    title: "Git Clone in Go",
+    title: "git clone in go",
     description:
-      "A from-scratch implementation of Git core plumbing.",
-    longDescription:
-      "Implements git init, git add, git commit, git log, git push, and git clone from scratch in Go. Parses pack files, resolves delta chains, implements the HTTP smart protocol, and handles the object store.",
-    tags: ["Go", "Systems", "Git Internals", "Networking"],
+      "implements git init, add, commit, log, push, and clone from scratch. parses pack files, resolves delta chains, implements the http smart protocol, and handles the object store.",
+    tags: ["go", "systems", "git internals", "networking"],
     github: "https://github.com/elliota43",
     stars: 84,
-    forks: 12,
-    lang: "Go",
-    langColor: "#00ADD8",
-    size: "wide",
+    lang: "go",
     status: "complete",
   },
   {
-    title: "Vim-style Text Editor in Rust",
-    description: "Modal text editor with gap buffer data structure.",
-    longDescription:
-      "A modal text editor built in Rust using raw terminal I/O with no external TUI libraries. Implements normal, insert, and visual modes. Uses a gap buffer for O(1) local edits. Supports syntax highlighting via tree-sitter.",
-    tags: ["Rust", "TUI", "Data Structures", "Tree-sitter"],
+    title: "vim-style text editor in rust",
+    description:
+      "modal text editor using raw terminal i/o with no external tui libraries. normal, insert, and visual modes. gap buffer for O(1) local edits. syntax highlighting via tree-sitter.",
+    tags: ["rust", "tui", "data structures", "tree-sitter"],
     github: "https://github.com/elliota43",
     stars: 61,
-    forks: 8,
-    lang: "Rust",
-    langColor: "#CE422B",
-    size: "normal",
+    lang: "rust",
     status: "active",
   },
   {
-    title: "Lox VM in C",
-    description: "Bytecode VM for the Lox language from Crafting Interpreters.",
-    longDescription:
-      "A complete bytecode virtual machine for the Lox language. Features mark-and-sweep garbage collection, closures with upvalue capture, a single-pass compiler, and a NaN-boxing value representation for performance.",
-    tags: ["C", "Compilers", "VM", "GC"],
+    title: "lox vm in c",
+    description:
+      "complete bytecode virtual machine for the lox language. mark-and-sweep garbage collection, closures with upvalue capture, single-pass compiler, nan-boxing value representation.",
+    tags: ["c", "compilers", "vm", "gc"],
     github: "https://github.com/elliota43",
     stars: 47,
-    forks: 5,
-    lang: "C",
-    langColor: "#555555",
-    size: "normal",
+    lang: "c",
     status: "complete",
   },
   {
-    title: "Declarative Laravel Migrations",
-    description: "Schema-driven database migrations for Laravel.",
-    longDescription:
-      "A Laravel package that allows you to define your database schema declaratively in a single file and automatically generates the necessary migrations. Eliminates migration drift and makes schema evolution explicit.",
-    tags: ["PHP", "Laravel", "Developer Tooling", "MySQL"],
+    title: "declarative laravel migrations",
+    description:
+      "laravel package to define your database schema declaratively in a single file. auto-generates necessary migrations. eliminates migration drift, makes schema evolution explicit.",
+    tags: ["php", "laravel", "developer tooling", "mysql"],
     github: "https://github.com/elliota43",
     stars: 33,
-    forks: 4,
-    lang: "PHP",
-    langColor: "#4F5D95",
-    size: "wide",
+    lang: "php",
     status: "active",
   },
 ];
 
-const STATUS_COLORS = {
-  complete: { bg: "#7effa010", text: "#7effa0", dot: "#7effa0" },
-  active: { bg: "#5dbaff10", text: "#5dbaff", dot: "#5dbaff" },
-  archived: { bg: "#6b6f8820", text: "#6b6f88", dot: "#6b6f88" },
-};
-
 export function ProjectsClient() {
   return (
-    <div className="min-h-screen pt-24 pb-20">
-      <div className="mx-auto max-w-5xl px-6">
-        {/* Header */}
+    <div className="min-h-screen pt-28 pb-20">
+      <div className="mx-auto max-w-2xl px-6">
         <motion.div
-          initial={{ opacity: 0, y: 16 }}
+          initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          className="mb-12"
+          transition={{ duration: 0.4 }}
+          className="mb-10"
         >
-          <div className="mb-2 font-mono text-xs text-[#7effa0]">~/projects</div>
-          <h1 className="mb-3 font-mono text-3xl font-bold tracking-tight text-[#e4e6f0]">
-            Projects
+          <h1 className="text-2xl font-semibold tracking-tight mb-3">
+            projects
           </h1>
-          <p className="text-[#6b6f88]">
-            Systems programming projects, compilers, and developer tooling. Most
-            source is on{" "}
+          <p className="text-sm text-overlay-1">
+            systems programming, compilers, and developer tooling.
+            source on{" "}
             <a
               href="https://github.com/elliota43"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-[#7effa0] hover:underline"
+              className="text-peach hover:underline"
             >
-              GitHub
+              github
             </a>
             .
           </p>
         </motion.div>
 
-        {/* Bento grid */}
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <div className="space-y-3">
           {PROJECTS.map((project, i) => (
-            <ProjectCard key={project.title} project={project} index={i} />
+            <motion.div
+              key={project.title}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3, delay: i * 0.04 }}
+            >
+              <div className="border border-surface-0 rounded-md p-5 hover:border-surface-1 transition-colors">
+                <div className="flex items-start justify-between gap-4 mb-1.5">
+                  <div className="flex items-center gap-3">
+                    <h3 className="text-sm font-medium text-subtext-1">
+                      {project.title}
+                    </h3>
+                    <span className="text-xs text-overlay-0">
+                      {project.status}
+                    </span>
+                  </div>
+                  {project.github && (
+                    <a
+                      href={project.github}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-overlay-0 hover:text-subtext-1 transition-colors shrink-0"
+                      aria-label="GitHub"
+                    >
+                      <Github size={14} />
+                    </a>
+                  )}
+                </div>
+
+                <p className="text-sm text-overlay-1 leading-relaxed mb-3">
+                  {project.description}
+                </p>
+
+                <div className="flex items-center justify-between">
+                  <div className="flex flex-wrap gap-2">
+                    {project.tags.map((tag) => (
+                      <span
+                        key={tag}
+                        className="text-xs text-overlay-0 bg-surface-0 px-1.5 py-0.5 rounded"
+                      >
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-3 text-xs text-overlay-0">
+                    <span>{project.lang}</span>
+                    {project.stars !== undefined && (
+                      <span>{project.stars}*</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </motion.div>
           ))}
         </div>
       </div>
     </div>
-  );
-}
-
-function ProjectCard({
-  project,
-  index,
-}: {
-  project: Project;
-  index: number;
-}) {
-  const statusStyle = STATUS_COLORS[project.status];
-  const isWide = project.size === "wide";
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.45, delay: index * 0.1 }}
-      whileHover={{ y: -3, transition: { duration: 0.2 } }}
-      className={cn(isWide ? "md:col-span-2" : "")}
-    >
-      <div className="group h-full rounded-xl border border-[#1c1f2e] bg-[#0d0f16] p-6 transition-all duration-300 hover:border-[#7effa020] hover:shadow-[0_8px_32px_#7effa006]">
-        {/* Top row */}
-        <div className="mb-4 flex items-start justify-between gap-4">
-          <div>
-            <div className="mb-1.5 flex items-center gap-2">
-              <span
-                className="rounded-sm px-2 py-0.5 font-mono text-xs"
-                style={{
-                  background: statusStyle.bg,
-                  color: statusStyle.text,
-                }}
-              >
-                <span
-                  className="mr-1 inline-block h-1.5 w-1.5 rounded-full"
-                  style={{ backgroundColor: statusStyle.dot }}
-                />
-                {project.status}
-              </span>
-            </div>
-            <h3 className="font-mono text-base font-semibold text-[#e4e6f0] transition-colors duration-200 group-hover:text-[#7effa0]">
-              {project.title}
-            </h3>
-          </div>
-          <div className="flex shrink-0 items-center gap-1.5">
-            {project.github && (
-              <a
-                href={project.github}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex h-7 w-7 items-center justify-center rounded-md border border-[#1c1f2e] text-[#363a50] transition-all duration-200 hover:border-[#252836] hover:text-[#e4e6f0]"
-                aria-label="GitHub"
-              >
-                <Github size={13} />
-              </a>
-            )}
-            {project.demo && (
-              <a
-                href={project.demo}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex h-7 w-7 items-center justify-center rounded-md border border-[#1c1f2e] text-[#363a50] transition-all duration-200 hover:border-[#252836] hover:text-[#e4e6f0]"
-                aria-label="Demo"
-              >
-                <ExternalLink size={13} />
-              </a>
-            )}
-          </div>
-        </div>
-
-        {/* Description */}
-        <p className="mb-4 text-sm leading-relaxed text-[#6b6f88]">
-          {isWide ? project.longDescription : project.description}
-        </p>
-
-        {/* Tags */}
-        <div className="mb-4 flex flex-wrap gap-1.5">
-          {project.tags.map((tag) => (
-            <span
-              key={tag}
-              className="rounded-sm bg-[#141720] px-2 py-0.5 font-mono text-xs text-[#363a50]"
-            >
-              {tag}
-            </span>
-          ))}
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center gap-4 border-t border-[#1c1f2e] pt-4">
-          <div className="flex items-center gap-1.5">
-            <span
-              className="h-2.5 w-2.5 rounded-full"
-              style={{ backgroundColor: project.langColor }}
-            />
-            <span className="font-mono text-xs text-[#363a50]">
-              {project.lang}
-            </span>
-          </div>
-          {project.stars !== undefined && (
-            <div className="flex items-center gap-1 font-mono text-xs text-[#363a50]">
-              <Star size={11} />
-              <span>{project.stars}</span>
-            </div>
-          )}
-          {project.forks !== undefined && (
-            <div className="flex items-center gap-1 font-mono text-xs text-[#363a50]">
-              <GitFork size={11} />
-              <span>{project.forks}</span>
-            </div>
-          )}
-        </div>
-      </div>
-    </motion.div>
   );
 }

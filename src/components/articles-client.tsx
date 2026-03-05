@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { useState } from "react";
-import { ArrowRight } from "lucide-react";
 import type { Article } from "@/lib/mdx";
 import { formatDateShort } from "@/lib/utils";
 import { cn } from "@/lib/utils";
@@ -23,42 +22,32 @@ export function ArticlesClient({ articles }: ArticlesClientProps) {
     : articles;
 
   return (
-    <div className="min-h-screen pt-24 pb-20">
-      <div className="mx-auto max-w-3xl px-6">
-        {/* Header */}
+    <div className="min-h-screen pt-28 pb-20">
+      <div className="mx-auto max-w-2xl px-6">
         <motion.div
-          initial={{ opacity: 0, y: 16 }}
+          initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          className="mb-12"
+          transition={{ duration: 0.4 }}
+          className="mb-10"
         >
-          <div className="mb-2 font-mono text-xs text-[#7effa0]">
-            ~/articles
-          </div>
-          <h1 className="mb-3 font-mono text-3xl font-bold tracking-tight text-[#e4e6f0]">
-            Articles
+          <h1 className="text-2xl font-semibold tracking-tight mb-3">
+            articles
           </h1>
-          <p className="text-[#6b6f88]">
-            Writing about systems programming, compilers, Go, Rust, and
-            developer tooling. {articles.length} posts so far.
+          <p className="text-sm text-overlay-1">
+            writing about systems programming, compilers, and developer
+            tooling. {articles.length} posts.
           </p>
         </motion.div>
 
-        {/* Tags filter */}
         {allTags.length > 0 && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.5, delay: 0.1 }}
-            className="mb-8 flex flex-wrap gap-2"
-          >
+          <div className="mb-8 flex flex-wrap gap-2">
             <button
               onClick={() => setActiveTag(null)}
               className={cn(
-                "rounded-md px-3 py-1 font-mono text-xs transition-all duration-200",
+                "text-xs px-2.5 py-1 rounded transition-colors",
                 activeTag === null
-                  ? "bg-[#7effa010] text-[#7effa0] border border-[#7effa030]"
-                  : "border border-[#1c1f2e] text-[#6b6f88] hover:text-[#e4e6f0] hover:border-[#252836]"
+                  ? "bg-surface-0 text-peach"
+                  : "text-overlay-0 hover:text-subtext-1"
               )}
             >
               all
@@ -68,75 +57,59 @@ export function ArticlesClient({ articles }: ArticlesClientProps) {
                 key={tag}
                 onClick={() => setActiveTag(tag === activeTag ? null : tag)}
                 className={cn(
-                  "rounded-md px-3 py-1 font-mono text-xs transition-all duration-200",
+                  "text-xs px-2.5 py-1 rounded transition-colors lowercase",
                   activeTag === tag
-                    ? "bg-[#7effa010] text-[#7effa0] border border-[#7effa030]"
-                    : "border border-[#1c1f2e] text-[#6b6f88] hover:text-[#e4e6f0] hover:border-[#252836]"
+                    ? "bg-surface-0 text-peach"
+                    : "text-overlay-0 hover:text-subtext-1"
                 )}
               >
                 {tag}
               </button>
             ))}
-          </motion.div>
+          </div>
         )}
 
-        {/* Articles list */}
-        <div className="space-y-px">
+        <div>
           {filtered.map((article, i) => (
             <motion.div
               key={article.slug}
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.4, delay: i * 0.07 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.3, delay: i * 0.04 }}
             >
               <Link
                 href={`/articles/${article.slug}`}
-                className="group block border-b border-[#1c1f2e] py-6 transition-all duration-200 hover:border-[#252836]"
+                className="group block py-4 border-b border-surface-0 last:border-b-0"
               >
-                <div className="flex items-start gap-6">
-                  {/* Date */}
-                  <div className="hidden w-28 shrink-0 font-mono text-xs text-[#363a50] sm:block pt-0.5">
+                <div className="flex items-baseline gap-6">
+                  <span className="text-xs text-overlay-0 shrink-0 tabular-nums hidden sm:block w-20">
                     {formatDateShort(article.frontmatter.date)}
-                  </div>
-
-                  {/* Content */}
+                  </span>
                   <div className="flex-1 min-w-0">
-                    <div className="mb-2 sm:hidden font-mono text-xs text-[#363a50]">
+                    <span className="text-xs text-overlay-0 sm:hidden block mb-1">
                       {formatDateShort(article.frontmatter.date)}
-                    </div>
-                    <h2 className="mb-1.5 font-mono text-base font-semibold text-[#e4e6f0] transition-colors duration-200 group-hover:text-[#7effa0]">
+                    </span>
+                    <h2 className="text-sm text-subtext-1 group-hover:text-peach transition-colors">
                       {article.frontmatter.title}
                     </h2>
-                    <p className="mb-3 text-sm leading-relaxed text-[#6b6f88]">
+                    <p className="text-sm text-overlay-1 mt-0.5 line-clamp-1">
                       {article.frontmatter.description}
                     </p>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2 mt-1.5 text-xs text-overlay-0">
                       {article.frontmatter.tags?.map((tag) => (
-                        <span
-                          key={tag}
-                          className="font-mono text-xs text-[#363a50]"
-                        >
-                          #{tag}
-                        </span>
+                        <span key={tag} className="lowercase">{tag}</span>
                       ))}
-                      <span className="font-mono text-xs text-[#363a50]">
-                        {article.readingTime}
-                      </span>
+                      <span className="text-surface-2">/</span>
+                      <span>{article.readingTime}</span>
                     </div>
                   </div>
-
-                  {/* Arrow */}
-                  <ArrowRight
-                    size={14}
-                    className="mt-1 shrink-0 text-[#363a50] transition-all duration-200 group-hover:translate-x-0.5 group-hover:text-[#7effa0]"
-                  />
                 </div>
               </Link>
             </motion.div>
           ))}
 
           {filtered.length === 0 && (
-            <div className="py-16 text-center font-mono text-sm text-[#363a50]">
+            <div className="py-16 text-center text-sm text-overlay-0">
               no articles found for &quot;{activeTag}&quot;
             </div>
           )}

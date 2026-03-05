@@ -6,7 +6,8 @@
       "Bash(cp:*)",
       "Bash(npm install:*)",
       "Bash(npm run:*)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "WebFetch(domain:vimcolorschemes.com)"
     ]
   }
 }

@@ -1,8 +1,4 @@
-"use client";
-
 import Link from "next/link";
-import { motion } from "framer-motion";
-import { Github, Mail } from "lucide-react";
 
 const links = [
   { href: "/articles", label: "articles" },
@@ -12,45 +8,39 @@ const links = [
 
 export function Footer() {
   return (
-    <footer className="border-t border-[#1c1f2e] py-8">
-      <div className="mx-auto max-w-5xl px-6">
-        <div className="flex flex-col items-center justify-between gap-4 sm:flex-row">
-          <div className="flex items-center gap-4">
+    <footer className="border-t border-surface-0 py-8 mt-8">
+      <div className="mx-auto max-w-2xl px-6">
+        <div className="flex flex-col items-center justify-between gap-4 sm:flex-row text-sm text-overlay-1">
+          <div className="flex items-center gap-5">
             {links.map((link) => (
               <Link
                 key={link.href}
                 href={link.href}
-                className="font-mono text-xs text-[#363a50] transition-colors duration-200 hover:text-[#7effa0]"
+                className="hover:text-subtext-1 transition-colors"
               >
                 {link.label}
               </Link>
             ))}
           </div>
 
-          <div className="flex items-center gap-3">
-            <motion.a
+          <div className="flex items-center gap-5">
+            <a
               href="https://github.com/elliota43"
               target="_blank"
               rel="noopener noreferrer"
-              whileHover={{ y: -1 }}
-              className="text-[#363a50] transition-colors duration-200 hover:text-[#7effa0]"
-              aria-label="GitHub"
+              className="hover:text-subtext-1 transition-colors"
             >
-              <Github size={15} />
-            </motion.a>
-            <motion.a
+              github
+            </a>
+            <a
               href="mailto:hello@elliotanderson.dev"
-              whileHover={{ y: -1 }}
-              className="text-[#363a50] transition-colors duration-200 hover:text-[#7effa0]"
-              aria-label="Email"
+              className="hover:text-subtext-1 transition-colors"
             >
-              <Mail size={15} />
-            </motion.a>
+              email
+            </a>
           </div>
 
-          <p className="font-mono text-xs text-[#363a50]">
-            © {new Date().getFullYear()} Elliot Anderson
-          </p>
+          <p>&copy; {new Date().getFullYear()}</p>
         </div>
       </div>
     </footer>
