@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Search, Check } from "lucide-react";
 import { useTheme } from "@/contexts/theme-context";
@@ -106,9 +106,31 @@ export function SettingsPanel() {
     });
   }, [search, activeCategory]);
 
-  const handlePreviewEnd = () => {
-    previewTheme(null);
-  };
+  const revertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handlePreview = useCallback(
+    (id: string) => {
+      if (revertTimerRef.current) {
+        clearTimeout(revertTimerRef.current);
+        revertTimerRef.current = null;
+      }
+      previewTheme(id);
+    },
+    [previewTheme]
+  );
+
+  const handlePreviewEnd = useCallback(() => {
+    revertTimerRef.current = setTimeout(() => {
+      previewTheme(null);
+      revertTimerRef.current = null;
+    }, 150);
+  }, [previewTheme]);
+
+  useEffect(() => {
+    return () => {
+      if (revertTimerRef.current) clearTimeout(revertTimerRef.current);
+    };
+  }, []);
 
   return (
     <AnimatePresence>
@@ -272,7 +294,7 @@ export function SettingsPanel() {
                         setTheme(id);
                         // don't close panel — let them keep browsing
                       }}
-                      onPreview={previewTheme}
+                      onPreview={handlePreview}
                       onPreviewEnd={handlePreviewEnd}
                     />
                   ))}

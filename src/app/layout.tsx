@@ -151,6 +151,15 @@ function buildSearchIndex(): SearchItem[] {
       tags: ["php", "laravel", "developer tooling", "mysql"],
       meta: "php",
     },
+    {
+      type: "project",
+      title: "playground",
+      description:
+        "Write and run JavaScript, TypeScript, C, Rust, and Go code in the browser.",
+      href: "/playground",
+      tags: ["playground", "code editor", "javascript", "typescript", "rust", "go", "c"],
+      meta: "playground",
+    },
   ];
 
   return items;
@@ -164,7 +173,7 @@ export default function RootLayout({
   const searchItems = buildSearchIndex();
 
   return (
-    <html lang="en" className={geistMono.variable}>
+    <html lang="en" className={geistMono.variable} suppressHydrationWarning>
       <head>
         {/* Anti-FOUC: apply saved theme before first paint */}
         <script dangerouslySetInnerHTML={{ __html: antiFOUCScript }} />
