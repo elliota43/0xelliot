@@ -41,7 +41,7 @@ export function Nav() {
             : "bg-transparent"
         )}
       >
-        <div className="mx-auto flex h-14 max-w-2xl items-center justify-between px-6">
+        <div className="mx-auto flex h-14 max-w-3xl items-center justify-between px-6">
           <Link href="/" className="text-sm text-peach">
             elliot<span className="animate-cursor">_</span>
           </Link>
@@ -109,7 +109,7 @@ export function Nav() {
 
       {mobileOpen && (
         <div className="fixed top-14 left-0 right-0 z-40 border-b border-surface-0 bg-base md:hidden">
-          <nav className="mx-auto max-w-2xl flex flex-col px-6 py-4 gap-2">
+          <nav className="mx-auto max-w-3xl flex flex-col px-6 py-4 gap-2">
             {navLinks.map((link) => {
               const isActive =
                 link.href === "/"

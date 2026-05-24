@@ -13,7 +13,11 @@ interface ArticlesClientProps {
 
 export function ArticlesClient({ articles }: ArticlesClientProps) {
   const allTags = Array.from(
-    new Set(articles.flatMap((a) => a.frontmatter.tags ?? []))
+    new Set(
+      articles.flatMap((a) =>
+        (a.frontmatter.tags ?? []).filter((t) => !t.startsWith("Series:"))
+      )
+    )
   );
   const [activeTag, setActiveTag] = useState<string | null>(null);
 
@@ -23,7 +27,7 @@ export function ArticlesClient({ articles }: ArticlesClientProps) {
 
   return (
     <div className="min-h-screen pt-28 pb-20">
-      <div className="mx-auto max-w-2xl px-6">
+      <div className="mx-auto max-w-3xl px-6">
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -89,16 +93,25 @@ export function ArticlesClient({ articles }: ArticlesClientProps) {
                     <span className="text-xs text-overlay-0 sm:hidden block mb-1">
                       {formatDateShort(article.frontmatter.date)}
                     </span>
-                    <h2 className="text-sm text-subtext-1 group-hover:text-peach transition-colors">
-                      {article.frontmatter.title}
-                    </h2>
+                    <div className="flex items-baseline gap-2">
+                      <h2 className="text-sm text-subtext-1 group-hover:text-peach transition-colors">
+                        {article.frontmatter.title}
+                      </h2>
+                      {article.frontmatter.seriesPart !== undefined && (
+                        <span className="shrink-0 text-xs text-overlay-0 tabular-nums">
+                          pt.{article.frontmatter.seriesPart}
+                        </span>
+                      )}
+                    </div>
                     <p className="text-sm text-overlay-1 mt-0.5 line-clamp-1">
                       {article.frontmatter.description}
                     </p>
                     <div className="flex items-center gap-2 mt-1.5 text-xs text-overlay-0">
-                      {article.frontmatter.tags?.map((tag) => (
-                        <span key={tag} className="lowercase">{tag}</span>
-                      ))}
+                      {article.frontmatter.tags
+                        ?.filter((t) => !t.startsWith("Series:"))
+                        .map((tag) => (
+                          <span key={tag} className="lowercase">{tag}</span>
+                        ))}
                       <span className="text-surface-2">/</span>
                       <span>{article.readingTime}</span>
                     </div>

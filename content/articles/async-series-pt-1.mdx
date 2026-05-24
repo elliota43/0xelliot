@@ -1,0 +1,588 @@
+---
+title: "Asynchronous Programming: Why Async Exists"
+date: "2026-03-12"
+description: "Step one into a series of posts where I dive deep into asynchronous programming concepts."
+tags: ["Systems Programming", "Async", "Async Programming"]
+series: "Async Programming"
+seriesPart: 1
+published: true
+---
+
+# Deep Dive: Asynchronous Programming: Why Async Exists
+
+I've been writing async code for a while -- spawning goroutines, `await`ing futures, passing callbacks --
+the mechanics become second nature pretty quickly.  But at the same time, if you'd asked me
+*why* any of it works the way it does, I'd have given you a hand-wavy answer about "not blocking the main thread"
+and moved on.
+
+Not undestanding things bothers me. Not in a compulsive, can't-sleep-at-night way, but in
+the way it bothers me when I'm debugging something and I have to deep dive into a program and realize
+I don't actually understand what's happening beneath whatever abstraction I'm working with.  I could
+just ask ChatGPT or Claude to fix it for me and call it a day, but the itch to *understand* is still there.
+And if there's anything I've learned from using AI, it's that -- for me at least, not trying to start any flame wars --
+having AI solve a problem doesn't help *the person* understand it.  The answer appears, the bug goes away,
+and you're no closer to knowing what happened in the first place, or what to do if a similar, but not exact, problem
+arises in the future.
+
+So this series isn't likely going to be appealing to my vibe-coding friends (no shade).  It's more intended
+for those who, like me, are interested in knowing what is happening under the hood.  We are going
+to start from the bottom -- processes, memory, threads, scheduling, I/O -- and build up to the point where async runtimes
+and `async/await` feel like obvious conclusions rather than magic keywords.  I'll eventually cover async programming in Rust and Go
+and perhaps some other languages, but this first stretch is language-agnostic.  After all, the OS doesn't care
+what language you're using, and neither should we -- at least not yet.
+
+I'll be drawing heavily from Remzi and Andrea Arpaci-Dusseau's *Operating Systems: Three Easy Pieces (OSTEP)*.
+If you haven't read it, it's free and it's excellent.  This isn't a summary of that book though --
+I will be covering the subset of OSTEP that's relevant to async programming, arranging things into a hopefully coherent
+arc and eventually connecting to real, modern language implementations.
+
+In many ways, this series will feel a bit like recursively adding stack frames until we understand the depth of the problem
+we have to solve, then slowly unwinding each layer until we come back to answering our core question.
+
+As a brief aside, I just recently was inspired to begin writing again, so if this draft is
+a little rough, sorry! 
+
+**Note**: As I began writing, I realized the scope of this series may deviate much farther than what some readers may 
+be happy with, but I genuinely believe that understanding the OS and how it works internally is crucial to understanding asynchronous programming 
+in order to understand the various problems that can arise.  Feel free to skip whatever sections you already know 
+or are not interested in.  
+
+## One Processor
+
+Let's start with the simplest possible picture of a computer: a single processor executing instructions,
+one at a time, in order. You write a program, the processor runs it from top to bottom.  When it's done,
+you give it another one.
+
+This is roughly how early computers worked.  Batch processing -- you submit a job, the machine runs it, you get
+your output when it's done.  Simple and easy to understand, but brutally wasteful.
+
+Most of that waste comes from I/O.  CPUs are insanely fast, but if your program is doing anything beyond
+reading/writing memory and doing arithmetic, you're CPU is going to be waiting for
+some other hardware component to finish its job -- reading from disk, writing to a tape,
+waiting for terminal input.  While it's waiting, the processor -- the most expensive and productive component on the machine --
+is *stuck*.  Even if it has more instructions to run, it is stuck, beholden to sequential execution, waiting
+for I/O to finish before it can move on to the nexy instruction.
+
+How bad is this?  It depends on the I/O device, but with modern hardware, the ratios can be staggering.
+A CPU can execute a simple instruction in under a nanosecond.  Reading a 4KB block from an SSD
+takes tens of microseconds -- that's tens of *thousands* of nanoseconds.  Network requests can vary wildly
+from hundreds of microseconds to tens of milliseconds.  Regardless, the order of magnitude between the CPU
+and the rest of the system shows the scale of the problem.
+
+On those early machines with mechanical I/O, the gap was even worse.  The processor was likely
+to sit idle for the vast majority of a program's runtime, which caused people to look for
+solutions.  What if we just ran a *different* program *while* this one is waiting?
+
+## Multiprogramming
+
+Which brings us to the core idea of **mutiprogramming**.  The idea is simple: load multiple programs
+into memory at the same time.  When Program A initiates an I/O operation and can't make progress until it
+completes, have the CPU switch to Program B.  When B blocks, switch to C, and so on and so on.  When A's I/O
+finishes, it becomes eligible to run again.
+
+It's worth taking a second to understand the level of complexity we just introduced.  Before,
+the CPU only had to read and execute sequential instructions in the order the OS kernel delivers them.
+For mutliprogramming, there are many problems we have to solve:
+
+- How do we stop one program and resume it later, without losing its state?
+If a program is halfway through execution when we switch away from it, how do we preserve everything?
+- How do we know where (which instruction) to resume execution?
+A running program has registers, a stack, a program counter, and other internal CPU state. Where does
+all that go when we pause it and switch to another program?
+- How does the CPU know which program to run next or which program to switch to?
+If multiple programs are ready to run, what determines which one gets the CPU first?
+- How do we prevent one program from interfering with another program's memory or execution?
+If several programs exist in memory at the same time, what stops a buggy or malicious program
+from overwriting someone else's data?
+- How do we ensure one program doesn't monopolize the CPU?
+What if a program either: doesn't voluntarily yield the CPU, or manipulates the OS's rules
+to prevent other programs from running?
+- How do we make one CPU appear as if many programs are running simultaneously?
+Users expect the system to run many programs at once, but we still only have one processor
+and it can still only execute one instruction at a time.
+
+... and so on and so on.  **Note**: resist the urge to scream "I HAVE A 12-CORE PROCESSOR YOU DIMWIT" and slamming
+your laptop shut!  Aside from the conceptual simplicity a single processor allows for both illustrating the problem and
+solution, I promise it's worth it to understand first how to solve this on a single processor,
+and scaling up to multiple cores / processors afterwards.
+
+## OS Abstractions
+
+The crux of the problem is this need to create an **illusion** that there are multiple processors working at once.
+In order to do that, we need a highly efficient communication mechanism between the various components
+of the system.  Luckily for us, some brilliant minds have created OS kernels that make this a breeze!
+
+**Note**: I'm going to be using Operating System/kernel/OS interchangeably, though there is a difference between the two
+and it can matter at times.  For our purposes, the Kernel is the core program that runs in **privileged mode** (more on this later)
+and controls access to the system's hardware resources.  The operating system is the entire system environment built around the kernel.
+So the kernel is part of the OS, and the part we are mostly interested in for now.
+
+The kernel provides the abstractions that solve all the problems we just discussed (and more!).
+
+### Virtualization
+
+The core function of the Operating System is **virtualization** -- transforming **physical**
+resources/components into a  **virtual** form of itself that programs can interact with.  To do this,
+the OS provides interfaces (APIs) that programs can call to access the various components.
+
+These are **system calls** -- and modern OSes have hundreds of them available to use.  These are the core
+components of any programming language's **standard library**.  The C standard library for example is
+a huge collection of system calls like `open`, `read`, `write`, etc, that allow you to open, read from and write to
+files, network sockets, and other resources.  The OS provides the abstraction that allows us to, in UNIX systems for example,
+use the same system calls to read from a file, from a network socket, etc.  This is an example of the kernel virtualizing
+the physical resources and providing an interface to the programmer:
+
+```c
+int fd = open("myfile.txt", O_RDONLY);
+char buffer[1024];
+int bytes_read = read(fd, buffer, 1023);
+buffer[bytes_read] = '\0';
+
+printf("Read from file: %s\n", buffer);
+
+int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+struct sockaddr_in addr;
+addr.sin_family = AF_INET;
+addr.sin_port = htons(8080);
+inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+
+connect(sockfd, (struct sockaddr *)&addr, sizeof(addr));
+
+bytes_read = read(sockfd, buffer, sizeof(buffer) - 1);
+buffer[bytes_read] = '\0';
+
+printf("Read from server: %s\n", buffer);
+
+close(sockfd);
+close(fd);
+return 0;
+
+```
+
+This example is a bit contrived (and does not check for errors), but it illustrates
+the idea -- the OS gives us file descriptors, which are their own abstractions, allowing
+us to read from and write to files, network sockets, etc. The C standard library provides us
+access to system calls (`open()`, `read()`, `socket()`, `close()`) that allow us, the programmer,
+to interact with the OS in a convenient way.  I could have used another system call, `write()`
+to write to the terminal via the STDOUT file descriptor, but the C standard library also provides
+an abstraction on top of the system call abstraction that makes things even easier.
+
+This is a common theme in systems programming and you will notice various languages have abstractions stacked
+on top of each other to cater to the desire of the programmer.  But it is worth remembering every now and then
+the purpose of these abstractions, which most of the time is to use a system call!
+
+### OS as Resource Manager
+
+The OS's ultimate job is to orchestrate interactions between the hardware components and the
+various software programs who want to use them.
+
+Let's go over some of the key abstractions the OS uses to virtualize the various hardware components:
+
+<CodeFigure caption="sample program that uses `malloc()` to request memory from the heap, and prints the process ID and memory address">
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+int main(void)
+{
+    int *p = malloc(sizeof(int));
+
+    if (p == NULL) {
+        fprintf(stderr, "memory allocation failed\n");
+        return 1;
+    }
+
+    while (1) {
+        printf("Process ID: %d | Memory Address: %p\n", getpid(), (void*)p);
+        sleep(1);
+    }
+
+    return 0;
+}
+
+```
+</CodeFigure>
+
+<Figure
+  src="/media/virtual_mem_program_output.png"
+  alt="Output from the sample program showing the process ID and virtual memory address repeating over time."
+  caption="program output: prints Process ID and Memory Address on loop"
+/>
+
+In the above program, we call `malloc()`, which is a C standard library function that handles the complexity of allocating 
+memory on the heap.  Under the hood, it calls the `sbrk()` and `mmap()` system calls to request memory from the kernel, and 
+keeps track of allocated/freed memory.  We also call `getpid()` -- another syscall that returns the **process ID** of the 
+current program, which brings us to the first key abstraction: **processes**.
+
+Processes are the abstraction provided by the OS to represent a given running program.  On your terminal (assuming you are running a UNIX-like OS),
+you can run `ps aux` to see all the processes running on your machine.  You can run `ps aux | wc -l` to see how many processes are currently running.  
+Right now, I have 726 different processes active! How does the kernel keep track and allow so many processes to run simultaneously?
+
+#### Processes
+
+One obvious component of what we can call a process's **machine state** is *memory*.  (Machine state just refers to what a process can read from or write to from the OS).
+When you write a program, the compiler generates a set of instructions the CPU executes, which reside in memory when the program runs.  Similarly, the data your program
+reads and writes sits in memory as well. 
+
+The memory the process can address is called its **address space**, which is a list of memory locations ranging from 0 to some maximum value (e.g. 2^64 - 1 for a 64-bit system),
+the program can theoretically read from or write to.  Within the address space are various *segments*:
+- **Text**: contains the compiled machine code instructions of the program.
+- **Data**: contains global and static variables from the program 
+- **Heap**: a dynamic memory region that grows and shrinks as the program runs based on the program's requests for dynamic memory.
+- **Stack**: region of memory used for function call management, storing local variables, and keeping track of the execution.  The 
+stack grows and shrinks as functions are called and return.
+
+Also associated with the process are various **registers** -- small, fast storage locations within the CPU that hold data and are used essentially as variables 
+for the CPU to perform various operations. 
+
+<Figure
+  src="/media/process_in_memory.png"
+  alt="Diagram of a process in memory showing the text, data, heap and stack segments."
+  caption="address space for a process with text, data, heap, and stack segments"
+  />
+
+Obviously, the 726 processes actively running on my machine can't all be loaded into memory at once, so what happens to a process that
+isn't actively in memory?  Programs can be in various **states**, and for simplicity, we will focus on three main states a procecss can be in:
+
+- **Running**: process is running on the CPU, executing instructions.
+- **Ready**: process is ready to run but for whatever reason the CPU chose to run another process instead.
+- **Blocked**: The blocked state is the core of our problem.  For a process to be blocked, it means it performed
+some kind of operation that requires it to wait for some external event to take place before it can continue.  A common
+example is a process initiating an I/O request to read from disk (or possibly read from a network socket).   Thus, the 
+process is blocked until the operation completes and another process can run on the CPU in the meantime.
+
+It is the *kernel's* responsibility to manage a process's state and to either **schedule** it (move it from ready to running) or **deschedule** it (move from running to ready).
+Once a process becomes blocked (by initiating an I/O request), the kernel will keep it in the blocked state until the I/O operation completes, at which point it will move it to the ready state,
+allowing it to be scheduled again.  **Note**: this does not mean the process will immediately run when it is ready, just that it is now eligible to run again and will be scheduled according to the 
+kernel's *scheduling algorithm* (which we will touch on briefly later). 
+
+<TableFigure caption="Example of two processes running on a single CPU with no I/O operations.">
+
+| Time | Process A | Process B | Notes                    |
+|------|-----------|-----------|--------------------------|
+| 1    | Running   | Ready     |                          |
+| 2    | Running   | Ready     |                          |
+| 3    | Running   | Ready     |                          |
+| 4    | Running   | Ready     | Process A is done.       |
+| 5    | -         | Running   |                          |
+| 6    | -         | Running   |                          |
+| 7    | -         | Running   |                          |
+| 8    | -         | Running   | Process B is done.       |
+
+</TableFigure>
+
+<TableFigure caption="Example of two processes running, where Process A initializes an I/O operation after running for some time, gets blocked, and gives Process B a chance to run.">
+
+| Time | Process A | Process B | Notes                    |
+|------|-----------|-----------|--------------------------|
+| 1    | Running   | Ready     |                          |
+| 2    | Running   | Ready     |                          |
+| 3    | Running   | Ready     | Process A initiates I/O. |
+| 4    | Blocked   | Running   | Process A is blocked.    |
+| 5    | Blocked   | Running   |                          |
+| 6    | Blocked   | Running   |                          |
+| 7    | Ready     | Running   | Process A's I/O is done. |
+| 8    | Ready     | Running   |                          |
+| 9    | Running   | -         | Process B is done.       |
+| 10   | Running   | -         | Process A is done.       |
+
+</TableFigure>
+
+It's easy to see the OS as a daunting black box that performs magic, but at the end of the day the kernel is just another program!
+As programmers, if we had to keep track of a bunch of different processes that have their own state and various properties,
+what would we do?  We would likely create some kind of data structure to represent each process and then have some data structure 
+that keeps track of all the processes in the system.  It turns out, the authors of the kernel had the same idea!
+
+In fact, if you look at the [Linux kernel's source code](https://github.com/torvalds/linux/blob/master/include/linux/sched.h), you can see:
+
+```c
+/* Used in tsk->__state: */
+#define TASK_RUNNING                  0x00000000
+#define TASK_INTERRUPTIBLE            0x00000001
+#define TASK_UNINTERRUPTIBLE          0x00000002
+#define __TASK_STOPPED                0x00000004
+#define __TASK_TRACED                 0x00000008
+/* Used in tsk->exit_state: */
+#define EXIT_DEAD                     0x00000010
+#define EXIT_ZOMBIE                   0x00000020
+#define EXIT_TRACE                    { EXIT_ZOMBIE | EXIT_DEAD }
+/* Used in tsk->__state again: */
+#define TASK_PARKED                   0x00000040
+#define TASK_DEAD                     0x00000080
+#define TASK_WAKEKILL                  0x00000100
+#define TASK_WAKING                    0x00000200
+#define TASK_NOLOAD                    0x00000400
+#define TASK_NEW                      0x00000800
+#define TASK_RTLOCK_WAIT             0x00001000
+#define TASK_FREEZABLE                   0x00002000
+#define __TASK_FREEZABLE_UNSAFE       (0x00004000 * IS_ENABLED(CONFIG_LOCKDEP))
+#define TASK_FROZEN                    0x00008000
+#define TASK_STATE_MAX               0x00010000
+```
+
+As you can see, the Linux kernel defines various states that are more granular than the basic three we discussed,
+but you can see the same idea!  
+
+Some systems have an **initial** state after a process is created but before it runs, as well as a **final** state where
+it is done executing but has not yet been cleaned up (that's what the "zombie" state you see above is for).  This state 
+can be useful for processes that were spawned by a **parent process** -- the kernel can pass the child process's exit status/return value 
+to the parent process when it finishes executing.  We will talk more about this when we cover system calls like `wait()` and `fork()`.
+
+Furtuer, we can see [here](https://github.com/torvalds/linux/blob/master/include/linux/mm_types.h):
+
+```c
+
+struct mm_struct {
+    struct {
+        /** ... */
+
+        /* this is a huge struct, so if you are following along 
+        I'm skipping to line 1255-1258 */
+        unsigned long start_code, end_code, start_data, end_data;
+        unsigned long start_brk, brk, start_stack;
+        unsigned long arg_start, arg_end, env_start, env_end;
+        /* ... */
+    }
+}
+```
+
+You may notice we don't see "Data" (also referred to as "BSS") here.  That's just because Linux places uninitialized
+global variables in memory immediately following `end_data` and before `start_brk`.
+But you can see the kernel keeps track of the various memory segments for a process!  The linux kernel is insanely complex,
+but at the end of this series, I hope you are inspired to dive into it and explore it for yourself.  My goal is that 
+you are able to understand *some* of what is going on in there when you finish this series.
+
+We can take a look at the register structs too, but it is important to note that they are architecture-specific and will vary 
+depending on the system.  
+
+For [x86](https://github.com/torvalds/linux/blob/v4.18/arch/x86/include/asm/ptrace.h) systems:
+
+```c
+struct pt_regs {
+    unsigned long r15;
+    unsigned long r14;
+    unsigned long r13;
+    unsigned long r12;
+    unsigned long bp;
+    unsigned long bx;
+    unsigned long r11;
+    unsigned long r10;
+    unsigned long r9;
+    unsigned long r8;
+    unsigned long ax;
+    unsigned long cx;
+    unsigned long dx;
+    unsigned long si;
+    unsigned long di;
+    unsigned long orig_ax;
+    unsigned long ip;
+    unsigned long cs;
+    unsigned long flags;
+    unsigned long sp; /* stack pointer */
+    unsigned long ss;
+};
+```
+
+These are the general-purpose registers, the instruction pointer (`ip`), the 
+stack pointer (`sp`), the flags register, and a few segment registers. 
+When the OS needs to pause a process and come back to it later, called a **context switch**,
+these are the registers that it saves in memory in order to be able to restore the program to 
+the exact state it was in when it stopped.  All of this is handled by the kernel, and the process
+is unaware that it was paused and resumed.  In fact, it is important to note that processes are 
+completely unaware of the fact they are sharing the CPU with other processes.  
+
+But these all show the *individual* properties of a process.  The kernel needs to bundle 
+all of this together into a single data structure that represents all running processes.
+
+##### Process Control Block (PCB)
+
+In operating systems, the **Process Control Block (PCB)** is the central data structure
+that keeps track of all the active processes.
+
+Once again we can see in the Linux kernel's [source](https://github.com/torvalds/linux/blob/master/include/linux/sched.h):
+
+(Note: this struct is massive, so I'm only showing relevant portions.)
+```c
+struct task_struct {
+    /* ... */
+    /* ----- process state ------ */
+    unsigned int __state;               /* TASK_RUNNING, TASK_INTERRUPTIBLE, and the other states we saw earlier. */
+
+    /* ----- identity ------ */
+    pid_t pid;                         /* Process ID. */
+    pid_t tgid;                        /* Thread group ID. */
+
+    /* ---- memory ------- */
+    struct mm_struct *mm;           /* Address space of this process. */            
+
+    /* ---- CPU state (saved/restored on context switch) */
+    struct thread_struct thread;
+
+    /* ----- scheduling ------ */
+    int prio;                  /* Process priority. */ 
+    int static_prio;       /* Static priority. */
+    const struct sched_class *sched_class; /* scheduling priority */ 
+
+    /* ---- file system ----- */
+    struct files_struct *files;            /* File descriptors for this process. */
+
+    /* ---- parent/child relationships ----- */
+    struct task_struct *parent;          /* Parent process. */
+    struct list_head children;           /* List of child processes. */
+
+    /* ---- signals ----- */
+    struct signal_struct *signal;        /* Signal handlers and related info. */
+
+    /* and hundreds of more fields */
+}
+```
+
+This is where it all comes together.  Remember our core questions from the section on Multiprogramming?
+
+- *How do we stop one program and resume it later without losing its state?* 
+The kernel saves the process's register state into the `thread` field of its `task_struct`, and restores it when the
+process is scheduled again.  
+- *How do we know where (which instruction) to resume execution?*
+The saved register state includes the instruction pointer (`ip`), which tells the CPU which 
+instruction to execute when the process is resumed.
+- *How do we prevent one program from interfering with another program's memory?*
+We can see from the Linux kernel's source code that each process has its own `mm_struct` (pointed to by the `mm` field in `task_struct`),
+which defines its *own address space*.  We will go much further into detail on this later,
+but the kernel is able to actually configure the CPU's Memory Management Unit (MMU) to translate 
+*virtual* memory addresses into the *physical* memory addresses (the *real* RAM addresses), so that each process cannot see or access another process's memory. 
+This is a crucial part of the kernel's job, and we will talk more about it later.
+
+So the `task_struct`, for Linux (we have been using Linux for the purposes of this explanation, but most operating system will have a similar structure),
+is in many ways the "master data structure" for the kernel.  It maintains a list of all `task_struct` instances -- one for each running process -- and uses
+this list to make scheduling decisions, manage memory, and orchestrate everything else that involves processes.
+
+I encourage you to explore this struct definition, and go back to it throughout the series and see if more of it makes sense to you.
+
+
+#### Process API
+
+Now that we know what a process is, let's take a look at how they are created and managed.  In UNIX-like systems,
+process management (also referred to as **process control** for any PHP developers wondering what pnctl stands for), is done through
+system calls (as is everything else!).  
+
+Before we dive into the process API any further, let's quickly address something we have used without formally defining:
+the **process ID** (PID).  Every process in the system is assigned a unique integer identifier by the kernel when it is created.
+This is the number you see when you run `ps aux` (see the earlier screenshot), the number returned by `getpid()` syscall we used earlier.  
+
+PIDs are how the kernel refers to specific processes. You have probably run `kill <PID>` or `kill -9 PID` before to kill some program that
+was misbehaving.  You were asking the kernel to send a **signal** to the process with the PID you specified.  The very first process the kernel 
+creates when the system boots up is called `init`, and it is assigned a PID of 1.  Every subsequent process gets an 
+incrementing number as its PID.
+
+Now, let's dive into the most important system calls for process management: `fork()`, `exec()`, and `wait()`.
+
+`fork()` creates a new process by **duplicating** the calling process.  The new process, the **child**, is an 
+almost-exact copy of the original (the **parent**).  The child gets its own PID and its own *copy* of the parent's 
+*execution context* (memory, registers, etc), and it is worth going into some detail on what that means exactly.
+
+When you call `fork()`, the kernel creates a new `task_struct` for the child and populates it based on the parent's.
+The child gets its own process table entry, its own PID, and its own address space, but the *contents* of that address space 
+start off as an exact copy of the parent's.  If the parent process had `x = 42;` on its stack, the child process will
+also have `x = 42;` on its stack when it starts executing.  It will be an *independent* copy, so the two
+will not interfere in memory.  
+
+The child also inherits copies of the parent's **file descriptor tables**.  We saw in the `task_struct` definition a field 
+called `files`, which pointed to a `files_struct`.  The kernel will copy the parent's file descriptor table, so the child
+will get a copy of the parent's pointers to open files, network sockets, etc.  But those pointers will 
+still point to the same underlying file/socket/etc.
+
+This mechanism actually is what allows shells to set up pipes and I/O redirection, and I will show you an example of that shortly.
+
+`exec()` (technically a family of functions `execve()`, `execl()`, `execvp()`, etc) replaces the current process's
+address space with a brand-new program.  The text segment is overwritten with the new program's machine code instructions, the heap
+and the stack are re-initialized, but the process's PID remains the same.  It also retains the same `task_struct` instance.  It's the same
+process wearing a different program's clothes, so to speak.
+
+`wait()` is the system call that allows a parent process to wait for its child process to complete.  
+Earlier, we saw the `EXIT_ZOMBIE` state.  This is because when a child process exits, it doesn't get cleaned 
+up / destroyed immediately.  Instead, it enters this "zombie" state *until* the parent calls wait to retrieve its 
+exit status.  If the parent never calls `wait()`, the child process lingers around, so it's important to remember 
+to call `wait()` when you spawn child processes with `fork()`!
+
+Note: the kernel will actually clean up zombie processes eventually, but it's still good practice 
+to call `wait()` to avoid having too many zombies around.  The kernel is able to do this because when the parent 
+exits, the child process gets re-parented to the `init` process, and the kernel sweeps up any zombie children of `init` periodically.
+
+This pattern -- `fork()` followed by `exec()` -- is actually the foundation of how UNIX shells work!  When you 
+type `ls` in your terminal, the shell:
+
+1. Calls `fork()` to create a child process.
+2. The child calls `exec()` to replace itself with another program.
+3. The parent (the shell) calls `wait()` and blocks until the child exits.
+4. When `ls` exits, `wait()` returns and the shell is ready for your next command.
+
+<CodeFigure caption="The classic fork/exec/wait pattern that UNIX shells use to run programs">
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/wait.h>
+
+int main(void)
+{
+    printf("parent process (pid: %d)\n", getpid());
+    pid_t pid = fork(); /* create a child process */
+
+    if (pid < 0) {
+        fprintf(stderr, "fork failed\n");
+        return 1;
+    } else if (pid == 0) {
+        /* we are the child process!
+         fork() returns:
+         0 for the child process 
+         the PID of the newly created child process for the parent  */
+
+        printf("child process (pid: %d)\n", getpid());
+        printf("my parent is: %d\n", getppid());
+
+        /* execvp just searches the PATH environment for 
+        the command you pass to it, so instead of having to do 
+        /bin/ls, we can just do ls */
+        char *args[] = { "ls", "-la", NULL };
+        execvp(args[0], args);
+
+
+        /* Note: if we got here, it failed! */
+        fprintf(stderr, "exec failed\n");
+        return 1;
+    } else {
+        /* we are the parent process */ 
+        printf("parent waiting for child (child's pid: %d)...\n", pid);
+
+        int status;
+        waitpid(pid, &status, 0); /* blocks until child exits */
+        /* Note: waitpid() lets you wait for a specific child.  In this case, we could 
+        also have used wait(), which waits for any child and resumes execution 
+        after the first child returns. */
+
+        printf("child exited with status: %d\n", WEXITSTATUS(status)); /* WEXITSTATUS is a macro provided by the standard lib*/ 
+    }
+
+    return 0;
+}
+```
+
+</CodeFigure>
+
+One subtlety worth noting: `fork()` does not copy the address space immediately.
+Modern kernels use a technique called **copy-on-write** to save memory, so it lazily 
+copies the address space only when necessary, which makes `fork()` much more efficient
+than a full copy (most `fork()` calls are followed immediately by `exec()` and thus do not need the full copy anyway).
+
+#### Limited Direct Execution
+
+We've covered pretty extensively what a process is, what it looks like, and how they are created.
+But there is a fundamental question we have skated past so far: **how does the kernel actually get control of the CPU**?
+
+Think about it.  The kernel is just software, like any other program, and thus needs the CPU to execute its instructions.
+But if a user process is running on the CPU, the kernel **isn't running**.  So how does the OS ever get a chance
+to do its job and make scheduling decisions, manage memory, save register state, etc?
+

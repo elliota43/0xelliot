@@ -10,6 +10,8 @@ export interface ArticleFrontmatter {
   tags?: string[];
   canonicalUrl?: string;
   published?: boolean;
+  series?: string;
+  seriesPart?: number;
 }
 
 export interface SnippetFrontmatter {

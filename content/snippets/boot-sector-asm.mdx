@@ -1,0 +1,180 @@
+---
+title: "Boot Sector Interactive"
+date: "2026-03-12"
+description: "A cool interactive boot sector for x86_64 that prints ASCII and hex values for user input."
+language: "Assembly"
+tags: ["Assembly", "Operating Systems", "Systems Programming"]
+---
+
+I've been messing around and learning more about assembly and how operating systems work,
+including the boot sector.  This is a cool, simple boot sector that prints ASCII
+and hex values for user input!
+
+```asm
+BITS 16
+ORG 0x7c00
+
+start:
+    cli
+    xor ax, ax
+    mov ds, ax
+    mov es, ax
+    mov ss, ax
+    mov sp, 0x7c00
+    sti
+
+    ; set text mode 80x25 color
+    mov ax, 0x0003
+    int 0x10
+
+    ; print banner
+    mov si, banner
+    call print_string
+
+main_loop:
+
+    mov si, prompt
+    call print_string
+    ; check if a key is waiting in buffer
+
+.wait_for_key:
+    mov ah, 0x01
+    int 0x16
+    jz .wait_for_key ; if zero flag (ZF) is set, no key is ready. Keep waiting
+
+    ; key is ready. read and remove from buffer
+    xor ah, ah
+    int 0x16
+
+    ; check for esc
+    cmp al, 27
+    je done
+
+    mov [last_ascii], al
+    mov [last_scan], ah
+
+    mov si, ascii_msg
+    call print_string
+
+    mov al, [last_ascii]
+    call print_char_or_dot
+
+    mov si, quote_suffix
+    call print_string
+
+    ; print "hex=0xXX" part
+    mov si, hex_prefix
+    call print_string
+
+    mov al, [last_ascii]
+    call print_hex8
+
+    ; print scan=0xXX part
+    mov si, scan_msg
+    call print_string
+
+    mov al, [last_scan]
+    call print_hex8
+
+    ; finish and repeat
+    call newline
+    jmp main_loop
+
+
+
+done:
+    mov si, bye_msg
+    call print_string
+
+hang:
+    hlt
+    jmp hang
+
+; --------------------------------------
+; print null-terminated string at DS:SI
+print_string:
+    lodsb
+    test al, al
+    jz .ret
+    mov ah, 0x0e
+    mov bh, 0x00
+    mov bl, 0x07
+    int 0x10
+    jmp print_string
+
+.ret:
+    ret
+
+; print newline
+newline:
+    mov al, 13
+    mov ah, 0x0e
+    int 0x10
+    mov al, 10
+    mov ah, 0x0e
+    int 0x10
+    ret
+
+; print AL as character if printable, else '.'
+print_char_or_dot:
+    cmp al, 32
+    jb .dot
+    cmp al, 126
+    ja .dot
+    jmp .print
+
+.dot:
+    mov al, '.'
+
+.print:
+    mov ah, 0x0e
+    mov bh, 0x00
+    mov bl, 0x0f
+    int 0x10
+    ret
+
+; print AL as two hex digits
+print_hex8:
+    push ax
+    shr al, 4
+    call print_hex_nibble
+    pop ax
+    and al, 0x0f
+    call print_hex_nibble
+    ret
+
+; print low nibble of AL as hex
+print_hex_nibble:
+    and al, 0x0f
+    cmp al, 9
+    jbe .digit
+    add al, 'A' - 10
+    jmp .emit
+
+.digit:
+    add al, '0'
+.emit:
+    mov ah, 0x0e
+    mov bh, 0x00
+    mov bl, 0x0a
+    int 0x10
+    ret
+
+banner db "Boot Sector Keyboard Inspector", 13, 10
+       db "Press keys to see ASCII and scan code. ESC to quit.", 13, 10, 13, 10, 0
+prompt db "> Press a key: ", 0
+ascii_msg db "  ASCII='", 0
+hex_prefix db "  hex=0x", 0
+scan_msg db "  scan=0x", 0
+quote_suffix db "'", 0
+bye_msg db 13, 10, "ESC pressed. Halting.", 0
+
+last_ascii db 0
+last_scan db 0
+
+times 510 - ($-$$) db 0
+dw 0xaa55
+
+````
+
+
